@@ -29,7 +29,7 @@ ostream& operator<<(ostream& os, vector<T> const& v)
 
 /***********************************************************************/
 
-const bool debug = false;
+const bool debug = true;
 
 typedef double Cost;
 
@@ -177,6 +177,11 @@ cplexvars construct_ip_common(wcsp& w, IloEnv iloenv, IloModel ilomodel)
         else if(w.domains[i] == 2) {
             v.d[i] = IloIntVarArray(iloenv);
             v.d[i].add(IloIntVar(iloenv, 0, 1));
+            if( debug ) {
+                ostringstream oss;
+                oss << "db(" << i << ")";
+                v.d[i][0].setName(oss.str().c_str());
+            }
         } else {
             IloIntArray lbs(iloenv, w.domains[i]), ubs(iloenv, w.domains[i]);
             for(size_t j = 0; j != w.domains[i]; ++j) {
@@ -184,8 +189,13 @@ cplexvars construct_ip_common(wcsp& w, IloEnv iloenv, IloModel ilomodel)
                 ubs[j] = 1;
             }
             v.d[i] = IloIntVarArray(iloenv, lbs, ubs);
+            if( debug ) {
+                ostringstream oss;
+                oss << "d_" << i << "_";
+                v.d[i].setNames(oss.str().c_str());
+            }
 
-            // we reuse ubs here to be coefficients, since they are all 1
+            // we reuse ubs here as coefficients, since they are all 1
             ilomodel.add( IloScalProd(ubs, v.d[i]) == 1 );
         }
     }
@@ -193,51 +203,125 @@ cplexvars construct_ip_common(wcsp& w, IloEnv iloenv, IloModel ilomodel)
     v.p.resize(w.functions.size());
     for(size_t i = 0; i != w.functions.size(); ++i) {
         wcspfunc const& f = w.functions[i];
+        if( f.scope.size() == 1 )
+            continue; // no need to introduce variables, just put the
+                      // thing in the objective
         IloIntArray lbs(iloenv, f.specs.size()), ubs(iloenv, f.specs.size());
         for(size_t j = 0; j != f.specs.size(); ++j) {
             lbs[j] = 0;
             ubs[j] = 1;
         }
         v.p[i] = IloIntVarArray(iloenv, lbs, ubs);
+        if( debug ) {
+            ostringstream oss;
+            oss << "p(" << i << ")";
+            v.p[i].setNames(oss.str().c_str());
+        }
 
-        // we reuse ubs here to be coefficients, since they are all 1
+        // we reuse ubs here as coefficients, since they are all 1
         ilomodel.add( IloScalProd(ubs, v.p[i]) == 1 );
     }
 
     return v;
 }
 
-void add_tuple_constraints(wcsp &w, cplexvars &v ,
+void add_tuple_constraints(wcsp &w, cplexvars &v,
                            IloEnv iloenv, IloModel ilomodel)
 {
+    assert(0);
 }
 
-void add_direct_constraints(wcsp &w, cplexvars &v ,
+void add_direct_constraints(wcsp &w, cplexvars &v,
                             IloEnv iloenv, IloModel ilomodel)
 {
     for(size_t i = 0; i != w.functions.size(); ++i) {
+        wcspfunc const& f = w.functions[i];
+        if( f.scope.size() == 1 )
+            continue;
+        for(size_t q = 0; q != f.specs.size(); ++ q) {
+            auto& t = f.specs[q];
+            IloExpr e(iloenv);
+            e += v.p[i][q];
+            for( size_t j = 0; j != f.scope.size(); ++j) {
+                auto var = f.scope[j];
+                switch(w.domains[var]) {
+                case 1: continue;
+                case 2:
+                    if( t.tup[j] == 1 )
+                        e += (1 - v.d[var][0]);
+                    else
+                        e += v.d[var][0];
+                    break;
+                default:
+                    e += (1 - v.d[var][t.tup[j]]);
+                    break;
+                }
+            }
+            ilomodel.add(e >= 1);
+        }
     }
 }
 
-void solveilp_tuple(wcsp& w)
+void build_objective(wcsp &w, cplexvars &v,
+                     IloEnv iloenv, IloModel ilomodel)
 {
-    IloEnv iloenv;
-    IloModel ilomodel(iloenv);
-
-    cplexvars v = construct_ip_common(w, iloenv, ilomodel);
-
-    IloCplex cplex(iloenv);
-    cplex.extract(ilomodel);
-
-    cplex.solve();
+    IloExpr expr(iloenv);
+    for(size_t i = 0; i != w.functions.size(); ++i) {
+        wcspfunc const& f = w.functions[i];
+        if( f.scope.size() == 1 ) {
+            auto var = f.scope[0];
+            if( w.domains[var] == 1 ) {
+                continue;
+            } else if( w.domains[var] == 2 ) {
+                auto c0 = f.specs[0].cost, c1 = f.specs[1].cost;
+                if( std::isinf(c0) ) {
+                    c0 = 0;
+                    ilomodel.add( v.d[var][0] == 1 );
+                }
+                if( std::isinf(c1) ) {
+                    c1 = 0;
+                    ilomodel.add( v.d[var][0] == 0 );
+                }
+                expr += c0 * (1 - v.d[var][0]) +
+                    c1 * v.d[var][0];
+            } else {
+                for(size_t q = 0; q != f.specs.size(); ++q) {
+                    auto &tuple = f.specs[q].tup;
+                    auto cost = f.specs[q].cost;
+                    if( std::isinf(cost) ) {
+                        cost = 0;
+                        ilomodel.add( v.d[var][tuple[0]] == 0 );
+                    }
+                    expr += cost * v.d[var][tuple[0]];
+                }
+            }
+        } else {
+            // non-unary CF
+            for(size_t q = 0; q != f.specs.size(); ++q) {
+                auto cost = f.specs[q].cost;
+                if( std::isinf(cost) ) {
+                    cost = 0;
+                    ilomodel.add( v.p[i][q] == 0 );
+                }
+                expr += f.specs[q].cost * v.p[i][q];
+            }
+        }
+    }
+    IloObjective obj(iloenv, expr, IloObjective::Minimize);
+    ilomodel.add(obj);
 }
 
-void solveilp_direct(wcsp& w)
+void solveilp(wcsp& w, bool tenc)
 {
     IloEnv iloenv;
     IloModel ilomodel(iloenv);
 
     cplexvars v = construct_ip_common(w, iloenv, ilomodel);
+    if( tenc )
+        add_tuple_constraints(w, v, iloenv, ilomodel);
+    else
+        add_direct_constraints(w, v, iloenv, ilomodel);
+    build_objective(w, v, iloenv, ilomodel);
 
     IloCplex cplex(iloenv);
     cplex.extract(ilomodel);
@@ -307,10 +391,7 @@ int main(int argc, char* argv[])
     if( newtop < w.ub )
         w.ub = newtop;
 
-    if( tenc )
-        solveilp_tuple(w);
-    else
-        solveilp_direct(w);
+    solveilp(w, tenc);
 
     return 0;
 }
