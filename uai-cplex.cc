@@ -15,6 +15,18 @@
 #include <ilconcert/iloalg.h>
 #include <ilcplex/ilocplex.h>
 
+#include <sys/time.h>
+#include <sys/resource.h>
+#include <unistd.h>
+
+double cpuTime(void)
+{
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    return (double)ru.ru_utime.tv_sec + (double)ru.ru_utime.tv_usec / 1000000 +
+        (double)ru.ru_stime.tv_sec + (double)ru.ru_stime.tv_usec / 1000000;
+}
+
 using namespace std;
 using boost::format;
 
@@ -52,6 +64,11 @@ struct wcspfunc {
     size_t arity() const { return scope.size(); }
 };
 
+struct assignment {
+    int var;
+    int val;
+};
+
 struct wcsp {
     Cost ub;
 
@@ -59,6 +76,8 @@ struct wcsp {
     size_t nvars() const { return domains.size(); }
 
     vector<wcspfunc> functions;
+
+    vector<assignment> evidence;
 };
 
 template<typename T>
@@ -157,6 +176,17 @@ wcsp readwcsp(istream& is)
         read_fun_matrix(w, w.functions[i], is);
 
     return w;
+}
+
+void read_evidence(wcsp& w, istream& is)
+{
+    int nast;
+    is >> nast;
+    for(int i = 0; i != nast; ++i) {
+        assignment a;
+        is >> a.var >> a.val;
+        w.evidence.push_back(a);
+    }
 }
 
 /***********************************************************************/
@@ -353,12 +383,136 @@ void build_objective(wcsp &w, cplexvars &v,
     ilomodel.add(obj);
 }
 
+bool new_incumbent = false;
+bool should_print_incumbent = false;
+bool alarm_expired = false;
+bool first_solution = true;
+vector<int> incumbent;
+
+void print_incumbent(ostream& ofs)
+{
+    cout << "printing\n";
+    if( first_solution )
+        ofs << "MPE\n";
+    else
+        ofs << "-BEGIN-\n";
+    ofs << incumbent.size();
+    for(auto val : incumbent)
+        ofs << ' ' << val;
+    ofs << endl;
+
+    should_print_incumbent = false;
+    new_incumbent = false;
+    first_solution = false;
+}
+
+void extract_solution(IloCplex cplex, wcsp const& w, cplexvars const& vars)
+{
+    // copy-paste from the callback. Don't know how to abstract it
+    cout << "new incumbent " << cplex.getObjValue() << "\n";
+    incumbent.clear();
+    for(size_t var = 0; var != w.nvars(); ++var) {
+        switch(w.domains[var]) {
+        case 1:
+            incumbent.push_back(0);
+            break;
+        case 2:
+            {
+                IloNum val = cplex.getValue(vars.d[var][0]);
+                incumbent.push_back(val);
+                break;
+            }
+        default:
+            {
+                IloNumArray vals(vars.d[var].getEnv());
+                cplex.getValues(vals, vars.d[var]);
+                size_t sum = 0;
+                for(size_t q = 0; q != w.domains[var]; ++q) {
+                    sum += vals[q];
+                    if( vals[q] == 1 ) {
+                        incumbent.push_back(q);
+                    }
+                }
+                if( sum != 1 )
+                    throw up();
+                vals.end();
+                break;
+            }
+        }
+    }
+}
+
+ILOMIPINFOCALLBACK5(loggingCallback,
+                    wcsp&, w,
+                    cplexvars&, vars,
+                    IloNum, lastIncumbent,
+                    IloNum, lastPrint,
+                    ostream&, ofs)
+{
+    bool record_incumbent = false;
+
+    if ( hasIncumbent() &&
+         fabs(lastIncumbent - getIncumbentObjValue())
+         > 1e-5*(1.0 + fabs(getIncumbentObjValue())) ) {
+        lastIncumbent = getIncumbentObjValue();
+        record_incumbent = true;
+        new_incumbent = true;
+    }
+
+    if ( record_incumbent ) {
+        cout << "new incumbent " << getIncumbentObjValue() << "\n";
+        incumbent.clear();
+        for(size_t var = 0; var != w.nvars(); ++var) {
+            switch(w.domains[var]) {
+            case 1:
+                incumbent.push_back(0);
+                break;
+            case 2:
+                {
+                    IloNum val = getIncumbentValue(vars.d[var][0]);
+                    incumbent.push_back(val);
+                    break;
+                }
+            default:
+                {
+                    IloNumArray vals(vars.d[var].getEnv());
+                    getIncumbentValues(vals, vars.d[var]);
+                    size_t sum = 0;
+                    for(size_t q = 0; q != w.domains[var]; ++q) {
+                        sum += vals[q];
+                        if( vals[q] == 1 ) {
+                            incumbent.push_back(q);
+                        }
+                    }
+                    if( sum != 1 )
+                        throw up();
+                    vals.end();
+                    break;
+                }
+            }
+        }
+    }
+
+    if( getCplexTime() - lastPrint > 10.0 ) {
+        should_print_incumbent = true;
+        lastPrint = getCplexTime();
+    }
+
+    if( new_incumbent && should_print_incumbent ) {
+        print_incumbent(ofs);
+        lastPrint = getCplexTime();
+    }
+}
+
 enum encoding { TUPLE, DIRECT, MIXED };
 
-void solveilp(wcsp& w, encoding enc)
+void solveilp(wcsp& w, encoding enc, ostream& ofs, double timeout)
 {
     IloEnv iloenv;
     IloModel ilomodel(iloenv);
+    IloCplex cplex(iloenv);
+
+    double start = cplex.getCplexTime();
 
     cplexvars v = construct_ip_common(w, iloenv, ilomodel);
     if( enc != DIRECT )
@@ -367,10 +521,42 @@ void solveilp(wcsp& w, encoding enc)
         add_direct_constraints(w, v, iloenv, ilomodel);
     build_objective(w, v, iloenv, ilomodel);
 
-    IloCplex cplex(iloenv);
     cplex.extract(ilomodel);
 
+    if( !debug ) {
+        cplex.setParam(IloCplex::MIPDisplay, 0);
+    }
+
+    double used = cplex.getCplexTime() - start;
+    cout << "Consumed " << used << " to construct the model\n";
+
+    cplex.setParam(IloCplex::Threads, 1);
+    cplex.setParam(IloCplex::TiLim, timeout-used-1);
+
+    cplex.use(loggingCallback(iloenv, w, v, IloInfinity,
+                              cplex.getCplexTime(),
+                              ofs));
+
     cplex.solve();
+
+    if( new_incumbent )
+        print_incumbent(ofs);
+    else if( first_solution ) {
+        // print_incumbent has not been called because the callback is
+        // (I think) not called for solutions found before presolve.
+        // So it is possible we are feasible or even optimal but
+        // new_incumbent is false
+        switch( cplex.getStatus() ) {
+        case IloAlgorithm::Optimal:
+        case IloAlgorithm::Feasible:
+            cout << "printing\n";
+            extract_solution(cplex, w, v);
+            print_incumbent(ofs);
+            break;
+        default:
+            break;
+        }
+    }
 
     cout << "Solution status = " << cplex.getStatus() << endl;
     cout << "Solution value  = " << cplex.getObjValue() << endl;
@@ -386,11 +572,15 @@ int main(int argc, char* argv[])
         ("help", "produce help message")
         ("encoding", po::value<string>(&encoding)->default_value("tuple"),
                 "use direct/tuple encoding")
-        ("input-file,i", po::value<string>(), "wcsp input file")
+        ("input-file,i", po::value<string>(), "uai input file")
+        ("evidence-file,e", po::value<string>(), "evidence file")
+        ("query-file,q", po::value<string>(), "query file")
+        ("task,t", po::value<string>(), "task")
         ;
 
     po::positional_options_description p;
-    p.add("input-file", 1).add("output-file", 1);
+    p.add("input-file", 1).add("evidence-file", 1)
+        .add("query-file", 1).add("task", 1);
 
     po::variables_map vm;
     po::store(po::command_line_parser(argc, argv).
@@ -412,14 +602,40 @@ int main(int argc, char* argv[])
         cout << "must specify input file\n";
         return 1;
     }
-
-    ifstream ifs(vm["input-file"].as<string>());
-    if( !ifs ) {
-        cout << "could not open " << argv[1] << "\n";
+    if(!vm.count("evidence-file")) {
+        cout << "must specify evidence file\n";
+        return 1;
+    }
+    if(!vm.count("query-file")) {
+        cout << "must specify query file to ignore\n";
+        return 1;
+    }
+    if(!vm.count("task")) {
+        cout << "must specify task\n";
         return 1;
     }
 
+    string task = vm["task"].as<string>();
+    if( task != "MPE" ) {
+        cout << "nope, cannot do " << task << "\n";
+        return 1;
+    }
+
+    string input_file = vm["input-file"].as<string>(),
+        evidence_file = vm["evidence-file"].as<string>();
+    ifstream ifs(input_file);
+    if( !ifs ) {
+        cout << "could not open " << input_file << "\n";
+        return 1;
+    }
+
+    ifstream efs(evidence_file);
+    if( !efs ) {
+        cout << "could not open " << evidence_file << "\n";
+    }
+
     wcsp w = readwcsp(ifs);
+    read_evidence(w, efs);
 
     Cost newtop = 0;
     for(auto const& f : w.functions) {
@@ -437,7 +653,27 @@ int main(int argc, char* argv[])
     if( newtop < w.ub )
         w.ub = newtop;
 
-    solveilp(w, enc);
+    size_t dirpos = input_file.rfind('/');
+    if(dirpos == string::npos )
+        dirpos = 0;
+    else
+        ++dirpos;
+    string result_file = input_file.substr(dirpos)+"."+task;
+    ofstream ofs(result_file);
+    if( !ofs ) {
+        cout << "could not open " << result_file << "\n";
+        return 1;
+    }
+
+    cout << cpuTime() << " to read input\n";
+    const char *inftime = getenv("INF_TIME");
+    if(!inftime) {
+        cout << "INF_TIME not set\n";
+        return 1;
+    }
+    double timeout = stoi(inftime) - cpuTime();
+
+    solveilp(w, enc, ofs, timeout);
 
     return 0;
 }
