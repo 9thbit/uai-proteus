@@ -228,7 +228,49 @@ cplexvars construct_ip_common(wcsp& w, IloEnv iloenv, IloModel ilomodel)
 void add_tuple_constraints(wcsp &w, cplexvars &v,
                            IloEnv iloenv, IloModel ilomodel)
 {
-    assert(0);
+    for(size_t i = 0; i != w.functions.size(); ++i) {
+        wcspfunc const& f = w.functions[i];
+        if( f.scope.size() == 1 )
+            continue;
+
+        // create all the nd constraints
+        vector< vector<IloExpr> > supports(f.scope.size());
+        for(size_t q = 0; q != f.scope.size(); ++q) {
+            auto var = f.scope[q];
+            switch( w.domains[var] ) {
+            case 1:  continue;
+            case 2:
+                supports[q].resize(w.domains[var]);
+                supports[q][0] = IloExpr(iloenv);
+                supports[q][0] -= (1 - v.d[var][0]);
+                supports[q][1] = IloExpr(iloenv);
+                supports[q][1] -= v.d[var][0];
+                break;
+            default:
+                supports[q].resize(w.domains[var]);
+                for(size_t val = 0; val != w.domains[var]; ++val) {
+                    supports[q][val] = IloExpr(iloenv);
+                    supports[q][val] -= v.d[var][val];
+                }
+                break;
+            }
+        }
+
+        // add the supports to each constraint
+        for(size_t q = 0; q != f.specs.size(); ++ q) {
+            auto& t = f.specs[q];
+            for( size_t j = 0; j != f.scope.size(); ++j) {
+                supports[j][t.tup[j]] += v.p[i][q];
+            }
+        }
+
+        // and now post the completed thing
+        for(size_t q = 0; q != f.scope.size(); ++q) {
+            auto var = f.scope[q];
+            for(size_t val = 0; val != w.domains[var]; ++val)
+                ilomodel.add(supports[q][val] == 0);
+        }
+    }
 }
 
 void add_direct_constraints(wcsp &w, cplexvars &v,
@@ -311,15 +353,17 @@ void build_objective(wcsp &w, cplexvars &v,
     ilomodel.add(obj);
 }
 
-void solveilp(wcsp& w, bool tenc)
+enum encoding { TUPLE, DIRECT, MIXED };
+
+void solveilp(wcsp& w, encoding enc)
 {
     IloEnv iloenv;
     IloModel ilomodel(iloenv);
 
     cplexvars v = construct_ip_common(w, iloenv, ilomodel);
-    if( tenc )
+    if( enc != DIRECT )
         add_tuple_constraints(w, v, iloenv, ilomodel);
-    else
+    if( enc != TUPLE )
         add_direct_constraints(w, v, iloenv, ilomodel);
     build_objective(w, v, iloenv, ilomodel);
 
@@ -358,9 +402,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    bool tenc = true;
+    enum encoding enc = TUPLE;
     if (encoding == "direct" )
-        tenc = false;
+        enc = DIRECT;
+    else if (encoding == "mixed")
+        enc = MIXED;
 
     if(!vm.count("input-file")) {
         cout << "must specify input file\n";
@@ -391,7 +437,7 @@ int main(int argc, char* argv[])
     if( newtop < w.ub )
         w.ub = newtop;
 
-    solveilp(w, tenc);
+    solveilp(w, enc);
 
     return 0;
 }
