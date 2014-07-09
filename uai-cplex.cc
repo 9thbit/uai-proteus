@@ -567,7 +567,10 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
     }
 
     cout << "Solution status = " << cplex.getStatus() << endl;
-    cout << "Solution value  = " << cplex.getObjValue() << endl;
+    cout << "Solution value  = " << cplex.getObjValue()
+         << ", log10like = " << -cplex.getObjValue()/log(10.0)
+         << ", probability = " << exp(-cplex.getObjValue())
+         << endl;
 }
 
 int main(int argc, char* argv[])

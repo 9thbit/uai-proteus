@@ -13,6 +13,7 @@ CXXFLAGS=--std=c++11 -D __STDC_LIMIT_MACROS -D __STDC_FORMAT_MACROS -Wall -Wno-p
 	$(OPTFLAGS)
 LDLIBS= -lboost_program_options \
 	-L$(CPLEXLIBDIR) -lilocplex -lcplex -L$(CONCERTLIBDIR) -lconcert -lpthread
+LDFLAGS=--static
 CC=g++
 
 
