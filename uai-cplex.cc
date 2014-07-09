@@ -198,7 +198,7 @@ struct cplexvars {
                                // f.specs)
 };
 
-cplexvars construct_ip_common(wcsp& w, IloEnv iloenv, IloModel ilomodel)
+cplexvars construct_ip_common(wcsp const& w, IloEnv iloenv, IloModel ilomodel)
 {
     cplexvars v;
     v.d.resize(w.nvars());
@@ -255,7 +255,7 @@ cplexvars construct_ip_common(wcsp& w, IloEnv iloenv, IloModel ilomodel)
     return v;
 }
 
-void add_tuple_constraints(wcsp &w, cplexvars &v,
+void add_tuple_constraints(wcsp const&w, cplexvars const&v,
                            IloEnv iloenv, IloModel ilomodel)
 {
     for(size_t i = 0; i != w.functions.size(); ++i) {
@@ -303,7 +303,7 @@ void add_tuple_constraints(wcsp &w, cplexvars &v,
     }
 }
 
-void add_direct_constraints(wcsp &w, cplexvars &v,
+void add_direct_constraints(wcsp const&w, cplexvars const&v,
                             IloEnv iloenv, IloModel ilomodel)
 {
     for(size_t i = 0; i != w.functions.size(); ++i) {
@@ -334,7 +334,7 @@ void add_direct_constraints(wcsp &w, cplexvars &v,
     }
 }
 
-void build_objective(wcsp &w, cplexvars &v,
+void build_objective(wcsp const &w, cplexvars const &v,
                      IloEnv iloenv, IloModel ilomodel)
 {
     IloExpr expr(iloenv);
@@ -450,8 +450,8 @@ void extract_solution(IloCplex cplex, wcsp const& w, cplexvars const& vars)
 }
 
 ILOMIPINFOCALLBACK5(loggingCallback,
-                    wcsp&, w,
-                    cplexvars&, vars,
+                    wcsp const&, w,
+                    cplexvars const&, vars,
                     IloNum, lastIncumbent,
                     IloNum, lastPrint,
                     ostream&, ofs)
@@ -513,7 +513,7 @@ ILOMIPINFOCALLBACK5(loggingCallback,
 
 enum encoding { TUPLE, DIRECT, MIXED };
 
-void solveilp(wcsp& w, encoding enc, ostream& ofs, double timeout)
+void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
 {
     IloEnv iloenv;
     IloModel ilomodel(iloenv);
