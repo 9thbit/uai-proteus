@@ -383,6 +383,13 @@ void build_objective(wcsp &w, cplexvars &v,
     ilomodel.add(obj);
 }
 
+void add_evidence(wcsp const& w, cplexvars const& v,
+                  IloModel model)
+{
+    for(auto&& ast:w.evidence)
+        model.add( v.d[ast.var][ast.val] == 1 );
+}
+
 bool new_incumbent = false;
 bool should_print_incumbent = false;
 bool alarm_expired = false;
@@ -519,6 +526,7 @@ void solveilp(wcsp& w, encoding enc, ostream& ofs, double timeout)
         add_tuple_constraints(w, v, iloenv, ilomodel);
     if( enc != TUPLE )
         add_direct_constraints(w, v, iloenv, ilomodel);
+    add_evidence(w, v, ilomodel);
     build_objective(w, v, iloenv, ilomodel);
 
     cplex.extract(ilomodel);
