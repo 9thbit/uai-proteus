@@ -153,6 +153,7 @@ void read_fun_matrix(wcsp& w, wcspfunc& f, istream& is)
 wcsp readwcsp(istream& is)
 {
     wcsp w;
+    w.ub = numeric_limits<Cost>::max();
 
     string name;
     size_t nvars;
