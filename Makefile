@@ -6,8 +6,8 @@ CONCERTINCDIR = /home/gkatsirelos/pkgs/ilog/concert/include
 CPLEXINCDIR   = /home/gkatsirelos/pkgs/ilog/cplex/include
 
 #
-OPTFLAGS=-g
-#OPTFLAGS=-Ofast
+#OPTFLAGS=-g
+OPTFLAGS=-O3
 CXXFLAGS=--std=c++11 -D __STDC_LIMIT_MACROS -D __STDC_FORMAT_MACROS -Wall -Wno-parentheses -Wextra \
 	-I$(CPLEXINCDIR) -I$(CONCERTINCDIR) -DIL_STD \
 	$(OPTFLAGS)
@@ -19,3 +19,5 @@ CC=g++
 
 all: uai-cplex
 
+clean:
+	rm -f uai-cplex *~ *.o
