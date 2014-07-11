@@ -307,13 +307,16 @@ void add_tuple_constraints(wcsp const&w, cplexvars const&v,
         for(size_t q = 0; q != f.specs.size(); ++ q) {
             auto& t = f.specs[q];
             for( size_t j = 0; j != f.scope.size(); ++j) {
-                supports[j][t.tup[j]] += v.p[i][q];
+                if( w.domains[f.scope[j]] >= 2 )
+                    supports[j][t.tup[j]] += v.p[i][q];
             }
         }
 
         // and now post the completed thing
         for(size_t q = 0; q != f.scope.size(); ++q) {
             auto var = f.scope[q];
+            if( w.domains[var] == 1 )
+                continue;
             for(size_t val = 0; val != w.domains[var]; ++val)
                 ilomodel.add(supports[q][val] == 0);
         }
