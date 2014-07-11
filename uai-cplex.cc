@@ -631,6 +631,7 @@ int main(int argc, char* argv[])
         ("evidence-file,e", po::value<string>(), "evidence file")
         ("query-file,q", po::value<string>(), "query file")
         ("task,t", po::value<string>(), "task")
+        ("mip-start-file,s", po::value<string>(), "MIP start")
         ;
 
     po::positional_options_description p;
@@ -730,7 +731,15 @@ int main(int argc, char* argv[])
 
     cout << "Using " << encoding << " encoding\n";
 
-    solveilp(w, enc, ofs, timeout);
+    try {
+        solveilp(w, enc, ofs, timeout);
+    } catch(IloException e) {
+        cout << "cplex exception " << e << "\n";
+        throw;
+    } catch(up) { // hey how are you
+        cout << "something went wrong... either malformed input or internal error\n";
+        throw;
+    }
 
     return 0;
 }
