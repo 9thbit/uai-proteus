@@ -81,8 +81,8 @@ struct wcspfunc {
 };
 
 struct assignment {
-    int var;
-    int val;
+    unsigned var;
+    unsigned val;
 };
 
 struct wcsp {
@@ -94,6 +94,7 @@ struct wcsp {
     vector<wcspfunc> functions;
 
     vector<assignment> evidence;
+    vector<assignment> start;
 };
 
 template<typename T>
@@ -205,6 +206,32 @@ void read_evidence(wcsp& w, istream& is)
         w.evidence.push_back(a);
     }
 }
+
+void read_start(wcsp& w, istream& is)
+{
+    int solution=0;
+    while(true) {
+        string s;
+        is >> s;
+        if( !is )
+            break;
+        ++solution;
+        unsigned nast;
+        is >> nast;
+        if( nast != w.nvars() ) {
+            cout << "start file nvars not correct in solution " << solution << "\n";
+            throw up();
+        }
+        w.start.clear(); // forget the last solution
+        for(unsigned i = 0; i != nast; ++i) {
+            assignment a;
+            is >> a.var >> a.val;
+            w.start.push_back(a);
+        }
+    }
+    cout << "Read " << solution << " starts, keeping the last only\n";
+}
+
 
 /***********************************************************************/
 
@@ -420,6 +447,31 @@ void add_evidence(wcsp const& w, cplexvars const& v,
     }
 }
 
+void add_start(wcsp const& w, cplexvars const& v,
+               IloCplex cplex)
+{
+    cout << "Adding MIP start\n";
+    IloEnv env = cplex.getEnv();
+    IloNumVarArray startVar(env);
+    IloNumArray startVal(env);
+    for(auto&& ast: w.start) {
+        switch(w.domains[ast.var]) {
+        case 1:
+            break;
+        case 2:
+            startVar.add(v.d[ast.var][0]);
+            startVal.add(ast.val);
+            break;
+        default:
+            for(size_t i = 0; i != w.domains[ast.var]; ++i) {
+                startVar.add(v.d[ast.var][i]);
+                startVal.add( ast.val == i );
+            }
+            break;
+        }
+    }
+}
+
 bool new_incumbent = false;
 bool should_print_incumbent = false;
 bool alarm_expired = false;
@@ -569,6 +621,14 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
     add_evidence(w, v, ilomodel);
     build_objective(w, v, iloenv, ilomodel);
 
+    if( !w.start.empty() ) {
+        if( w.start.size() != w.nvars() ) {
+            cout << "start has the wrong number of variables\n";
+            throw up();
+        }
+        add_start(w, v, cplex);
+    }
+
     cplex.extract(ilomodel);
 
     if( !debug ) {
@@ -636,7 +696,8 @@ int main(int argc, char* argv[])
 
     po::positional_options_description p;
     p.add("input-file", 1).add("evidence-file", 1)
-        .add("query-file", 1).add("task", 1);
+        .add("query-file", 1).add("task", 1)
+        .add("mip-start-file", 1);
 
     po::variables_map vm;
     po::store(po::command_line_parser(argc, argv).
@@ -709,6 +770,17 @@ int main(int argc, char* argv[])
     if( newtop < w.ub )
         w.ub = newtop;
 
+    if( vm.count("mip-start-file") ) {
+        string ms = vm["mip-start-file"].as<string>();
+        cout << "Reading MIP start " << ms << "\n";
+        ifstream msfs(ms);
+        if( !msfs ) {
+            cout << "could not read " << ms << "\n";
+            return 1;
+        }
+        read_start(w, msfs);
+    }
+
     size_t dirpos = input_file.rfind('/');
     if(dirpos == string::npos )
         dirpos = 0;
@@ -719,6 +791,13 @@ int main(int argc, char* argv[])
     if( !ofs ) {
         cout << "could not open " << result_file << "\n";
         return 1;
+    }
+
+    if( !w.start.empty() ) {
+        incumbent.resize(w.nvars());
+        for(auto&& ast: w.start)
+            incumbent[ast.var] = ast.val;
+        print_incumbent(ofs);
     }
 
     cout << cpuTime() << " to read input\n";
@@ -737,7 +816,7 @@ int main(int argc, char* argv[])
         cout << "cplex exception " << e << "\n";
         throw;
     } catch(up) { // hey how are you
-        cout << "something went wrong... either malformed input or internal error\n";
+        cout << "something went wrong... internal error\n";
         throw;
     }
 
