@@ -495,6 +495,26 @@ void print_incumbent(ostream& ofs)
     first_solution = false;
 }
 
+void verify_incumbent(wcsp const& w)
+{
+    Cost obj = 0.0;
+    for(auto&& f: w.functions) {
+        for(auto&& t: f.specs) {
+            bool it = true;
+            for(unsigned i = 0; i != f.scope.size(); ++i)
+                if( incumbent[f.scope[i]] != t.tup[i] ) {
+                    it = false;
+                    break;
+                }
+            if( it ) {
+                obj += t.cost;
+                break;
+            }
+        }
+    }
+    cout << "incumbent cost " << obj << "\n";
+}
+
 void extract_solution(IloCplex cplex, wcsp const& w, cplexvars const& vars)
 {
     // copy-paste from the callback. Don't know how to abstract it
@@ -670,6 +690,8 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
         }
     }
 
+    verify_incumbent(w);
+
     cout << "Solution status = " << cplex.getStatus() << endl;
     cout << "Solution value  = " << cplex.getObjValue()
          << ", log10like = " << -cplex.getObjValue()/log(10.0)
@@ -682,11 +704,14 @@ int main(int argc, char* argv[])
     namespace po = boost::program_options;
 
     string encoding;
+    bool verify_only = false;
     po::options_description desc("Allowed options");
     desc.add_options()
         ("help", "produce help message")
         ("encoding", po::value<string>(&encoding)->default_value("tuple"),
                 "use direct/tuple encoding")
+        ("verify", po::value<bool>(&verify_only)->default_value(false),
+                "verify MIP start and exit")
         ("input-file,i", po::value<string>(), "uai input file")
         ("evidence-file,e", po::value<string>(), "evidence file")
         ("query-file,q", po::value<string>(), "query file")
@@ -798,6 +823,11 @@ int main(int argc, char* argv[])
         for(auto&& ast: w.start)
             incumbent[ast.var] = ast.val;
         print_incumbent(ofs);
+    }
+
+    if( verify_only ) {
+        verify_incumbent(w);
+        return 0;
     }
 
     cout << cpuTime() << " to read input\n";
