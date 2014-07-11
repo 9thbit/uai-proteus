@@ -695,6 +695,8 @@ int main(int argc, char* argv[])
     }
     double timeout = stoi(inftime) - cpuTime();
 
+    cout << "Using " << encoding << " encoding\n";
+
     solveilp(w, enc, ofs, timeout);
 
     return 0;
