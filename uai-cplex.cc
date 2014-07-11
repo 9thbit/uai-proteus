@@ -462,8 +462,8 @@ void extract_solution(IloCplex cplex, wcsp const& w, cplexvars const& vars)
                 cplex.getValues(vals, vars.d[var]);
                 size_t sum = 0;
                 for(size_t q = 0; q != w.domains[var]; ++q) {
-                    sum += vals[q];
-                    if( vals[q] == 1 ) {
+                    sum += vals[q] > 0.5;
+                    if( vals[q] > 0.5 ) {
                         incumbent.push_back(q);
                     }
                 }
@@ -523,8 +523,8 @@ ILOMIPINFOCALLBACK5(loggingCallback,
                     getIncumbentValues(vals, vars.d[var]);
                     size_t sum = 0;
                     for(size_t q = 0; q != w.domains[var]; ++q) {
-                        sum += vals[q];
-                        if( vals[q] == 1 ) {
+                        sum += vals[q] > 0.5;
+                        if( vals[q] > 0.5 ) {
                             incumbent.push_back(q);
                         }
                     }
