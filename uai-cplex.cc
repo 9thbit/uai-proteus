@@ -376,7 +376,7 @@ void build_objective(wcsp const &w, cplexvars const &v,
                     cost = 0;
                     ilomodel.add( v.p[i][q] == 0 );
                 }
-                expr += f.specs[q].cost * v.p[i][q];
+                expr += cost * v.p[i][q];
             }
         }
     }
@@ -387,8 +387,18 @@ void build_objective(wcsp const &w, cplexvars const &v,
 void add_evidence(wcsp const& w, cplexvars const& v,
                   IloModel model)
 {
-    for(auto&& ast:w.evidence)
-        model.add( v.d[ast.var][ast.val] == 1 );
+    for(auto&& ast:w.evidence) {
+        switch( w.domains[ast.var] ) {
+        case 1:
+            break;
+        case 2:
+            model.add(v.d[ast.var][0] == ast.val);
+            break;
+        default:
+            model.add( v.d[ast.var][ast.val] == 1 );
+            break;
+        }
+    }
 }
 
 bool new_incumbent = false;
