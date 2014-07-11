@@ -57,6 +57,12 @@ struct wcsptuple {
     wcsptuple(vector<size_t> const &t, Cost c) : tup(t), cost(c) {}
 };
 
+ostream& operator<<(ostream& os, wcsptuple const& t)
+{
+    os << t.tup << ":" << t.cost;
+    return os;
+}
+
 struct wcspfunc {
     vector<size_t> scope;
     vector< wcsptuple > specs;
