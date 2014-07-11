@@ -39,6 +39,16 @@ ostream& operator<<(ostream& os, vector<T> const& v)
     return os;
 }
 
+
+// trim from end
+static inline std::string &rtrim(std::string &s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(),
+                         [](int x) { return !std::isspace(x); }).base(),
+            s.end());
+    return s;
+}
+
+
 /***********************************************************************/
 
 const bool debug = true;
@@ -168,7 +178,7 @@ wcsp readwcsp(istream& is)
     string line;
 
     getline(is, line);
-    if( line != "MARKOV" )
+    if( rtrim(line) != "MARKOV" )
         throw up();
 
     is >> nvars;
