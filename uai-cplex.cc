@@ -487,8 +487,18 @@ ILOMIPINFOCALLBACK5(loggingCallback,
                 break;
             case 2:
                 {
-                    IloNum val = getIncumbentValue(vars.d[var][0]);
-                    incumbent.push_back(val);
+                    try {
+                        IloNum val = getIncumbentValue(vars.d[var][0]);
+                        incumbent.push_back(val);
+                    } catch( IloException ) {
+                        // a disconnected binary variable where both
+                        // values have the same cost will not be
+                        // extracted (a disconnected non-binary
+                        // variable will have the sum ... = 1
+                        // constraint, so the 0/1 representation will
+                        // be extracted)
+                        incumbent.push_back(0);
+                    }
                     break;
                 }
             default:
@@ -556,7 +566,11 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
                               cplex.getCplexTime(),
                               ofs));
 
-    cplex.solve();
+    try {
+        cplex.solve();
+    } catch(IloException e) {
+        cout << "oops, cplex says " << e << "\n";
+    }
 
     if( new_incumbent )
         print_incumbent(ofs);
