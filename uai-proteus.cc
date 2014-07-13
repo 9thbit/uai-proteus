@@ -980,6 +980,11 @@ int main(int argc, char* argv[])
     cout << "Prediction: " <<  solverid << endl;
 
     try {
+        // Close the result file stream if we are running external solvers
+        if(solverid != proteus_cplex && solverid != proteus_cplex_t){
+            ofs.close();
+        }
+
         if(solverid == proteus_mplp2){
             cout << "mplp2" << endl;
         } else if(solverid == proteus_toulbar2){
