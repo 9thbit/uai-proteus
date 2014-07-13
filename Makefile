@@ -20,7 +20,7 @@ LDFLAGS=--static
 CC=g++
 
 
-all: uai-cplex
+all: uai-proteus
 
 clean:
-	rm -f uai-cplex *~ *.o
+	rm -f uai-proteus *~ *.o
