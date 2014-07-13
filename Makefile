@@ -1,9 +1,12 @@
 # CPLEX
+# CPLEXHOME=/home/gkatsirelos/pkgs/ilog
+# CPLEXHOME=/Users/bhurley/Applications/IBM/ILOG/CPLEX_Studio1251
+CPLEXHOME=/opt/ibm/ILOG/CPLEX_Studio126
 LIBFORMAT=static_pic
-CPLEXLIBDIR   = /home/gkatsirelos/pkgs/ilog/cplex/lib/x86-64_sles10_4.1/$(LIBFORMAT)
-CONCERTLIBDIR = /home/gkatsirelos/pkgs/ilog/concert/lib/x86-64_sles10_4.1/$(LIBFORMAT)
-CONCERTINCDIR = /home/gkatsirelos/pkgs/ilog/concert/include
-CPLEXINCDIR   = /home/gkatsirelos/pkgs/ilog/cplex/include
+CPLEXLIBDIR   = $(CPLEXHOME)/cplex/lib/x86-64_sles10_4.1/$(LIBFORMAT)
+CONCERTLIBDIR = $(CPLEXHOME)/concert/lib/x86-64_sles10_4.1/$(LIBFORMAT)
+CONCERTINCDIR = $(CPLEXHOME)/concert/include
+CPLEXINCDIR   = $(CPLEXHOME)/cplex/include
 
 #
 #OPTFLAGS=-g
