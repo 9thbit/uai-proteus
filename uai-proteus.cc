@@ -985,22 +985,40 @@ int main(int argc, char* argv[])
             ofs.close();
         }
 
+        const char **argv2 = new const char*[6];
+        argv2[1] = input_file.c_str();
+        argv2[2] = evidence_file.c_str();
+        argv2[3] = "ignorequery";
+        argv2[4] = "MPE";
+        argv2[5] = NULL;
+        int retval = 0;
+
         if(solverid == proteus_mplp2){
-            cout << "mplp2" << endl;
+            argv2[0] = "./mplp2";
+            retval = execv("./mplp2", (char **)argv2);
+
         } else if(solverid == proteus_toulbar2){
-            cout << "toulbar2" << endl;
+            argv2[0] = "./toulbar2";
+            retval = execv("./toulbar2", (char **)argv2);
+
         } else if(solverid == proteus_tb2incop){
-            cout << "tb2incop" << endl;
+            argv2[0] = "./tb2incop";
+            retval = execv("./tb2incop", (char **)argv2);
+
         } else if(solverid == proteus_cplex){
             cout << "cplex direct" << endl;
-            // solveilp(w, DIRECT, ofs, timeout);
+            solveilp(w, DIRECT, ofs, timeout);
+
         } else if(solverid == proteus_cplex_t){
             cout << "cplex tuple" << endl;
-            // solveilp(w, TUPLE, ofs, timeout);
+            solveilp(w, TUPLE, ofs, timeout);
+
         } else {
             cerr << "Unknown solverid prediction" << endl;
             exit(1);  // FIXME default to one solver for submission
         }
+
+        cout << "Process return value: " << retval << endl;
     } catch(IloException e) {
         cout << "cplex exception " << e << "\n";
         throw;
