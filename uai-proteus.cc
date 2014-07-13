@@ -959,12 +959,12 @@ int main(int argc, char* argv[])
 
     if(vm.count("feat-file")){
         string featfilename = vm["feat-file"].as<string>();
-        ofstream ofs(featfilename);
-        if(!ofs){
+        ofstream ffs(featfilename);
+        if(!ffs){
             cerr << "Could not open feature file " << featfilename << endl;
             return 1;
         }
-        write_csv_features(ofs, vm["input-file"].as<string>(), feats);
+        write_csv_features(ffs, vm["input-file"].as<string>(), feats);
         if(feat_only) return 0;
     }
 
