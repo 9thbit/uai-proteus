@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <numeric>
 #include <vector>
 #include <string>
 #include <tuple>
@@ -10,6 +11,7 @@
 #include <unordered_map>
 #include <boost/format.hpp>
 #include <boost/program_options.hpp>
+#include "proteuspredictors.h"
 
 #include <ilconcert/ilomodel.h>
 #include <ilconcert/iloalg.h>
@@ -699,17 +701,135 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
          << endl;
 }
 
+/***********************************************************************/
+
+struct vecstats {
+    double mean, stddev, coefvar, min, max;
+};
+
+ostream& operator<<(ostream &s, const vecstats &v){
+    s << v.mean << " " << v.stddev << " " << v.coefvar << " " << v.min << " " << v.max;
+    return s;
+}
+
+struct featstruct {
+    vector<string> featnames;
+    vector<double> features;
+};
+
+template<typename T>
+vecstats compute_vector_stats(vector<T> v, function<double (T)> f){
+    // Computes some statistics about the list of values given by f(x) for each
+    // x in the vector v. e.g. f can be used to get the arity of a wcspfunc.
+    // f should take a single parameter, the same data type as the elements in
+    // the vector v and should return a double.
+
+    // Call f(x) on each element of v so we can cache the values, much faster
+    // than calling f(x) repeatedly.
+    vector<double> xs;
+    xs.reserve(v.size());
+    for(auto x : v) xs.push_back(f(x));
+
+    double sum = accumulate(xs.begin(), xs.end(), 0.0);
+    double mean = (double)(sum) / (double)xs.size();
+    double sumsqrddev = accumulate(xs.begin(), xs.end(), 0.0, [&](double tot, double e) { 
+        return tot + ((e - mean) * (e - mean));
+    });
+    double stddev = sqrt(sumsqrddev / xs.size());
+    double coefvar = mean != 0.0 ? stddev / mean : 0.0;
+
+    double min = *min_element(xs.begin(), xs.end());
+    double max = *max_element(xs.begin(), xs.end());
+
+    return {mean, stddev, coefvar, min, max};
+}
+
+size_t count_arity(vector<wcspfunc> functions, size_t arity){
+    // Counts the number of cost functions with a specific arity
+    return accumulate(functions.begin(), functions.end(), 0,
+        [&](size_t tot, wcspfunc f) { return tot + (f.arity() == arity ? 1 : 0); }
+    );
+}
+
+void write_csv_features(ostream &ofs, string probname, featstruct f){
+    ofs << "instance";  // Header line
+    for(auto s : f.featnames) ofs << "," << s; ofs << endl;
+
+    ofs << probname;
+    for(auto v : f.features) ofs << "," << setprecision(10) << v; ofs << endl;
+}
+
+featstruct compute_features(wcsp w, long filesize, double timeread, double timeub){
+    featstruct feats;
+
+    // Adds a single feature
+    auto addfeat = [&](string name, double v) {
+        feats.featnames.push_back(name);
+        feats.features.push_back(v);
+    };
+
+    // Adds each item from the vecstats to the feature list with prefix
+    auto addfeatstats = [&](string prefix, vecstats v) {
+        addfeat(prefix + "_mean", v.mean);
+        addfeat(prefix + "_stddev", v.stddev);
+        addfeat(prefix + "_coefvar", v.coefvar);
+        addfeat(prefix + "_min", v.min);
+        addfeat(prefix + "_max", v.max);
+    };
+
+    size_t N = w.nvars();
+    addfeat("filesize", (double)filesize);
+    addfeat("timeread", timeread);
+    addfeat("timeub", timeub);
+    addfeat("num_vars", N);
+    addfeat("num_cfs", w.functions.size());
+    addfeat("ub_init", w.ub);
+
+    vecstats dstats = compute_vector_stats<size_t>(w.domains, [](size_t d) {return (double)d;});
+    addfeatstats("domsize", dstats);
+
+    vecstats aritystats = compute_vector_stats<wcspfunc>(w.functions,
+        [&](wcspfunc f) { return (double)(f.arity()); });
+    addfeatstats("arity", aritystats);
+
+    // Density of unary, binary, and ternary cost functions, i.e. the fraction
+    // of the total number of possible cost functions of each arity.
+    size_t count1 = count_arity(w.functions, 1);
+    size_t count2 = count_arity(w.functions, 2);
+    size_t count3 = count_arity(w.functions, 3);
+    double density_unary = (double) count1 / (double)N;
+    double density_binary = (double) count2 / (double)(N * (N - 1));
+    double density_ternary = (double) count3 / (double)(N * (N - 1) * (N - 2));
+    addfeat("density1", density_unary);
+    addfeat("density2", density_binary);
+    addfeat("density3", density_ternary);
+
+    // Ratio of CFs that have arity 4 or greater.
+    double arity4plus = (double)(w.functions.size() - count1 - count2 - count3) / (double) w.functions.size();
+    addfeat("arity4plus", arity4plus);
+
+    return feats;
+}
+
+double get_cpu_time(){
+    return (double)clock() / CLOCKS_PER_SEC;
+}
+
+
+/***********************************************************************/
+
+
 int main(int argc, char* argv[])
 {
     namespace po = boost::program_options;
 
-    string encoding;
-    bool verify_only = false;
+    // string encoding;
+    bool verify_only = false, feat_only = false;
     po::options_description desc("Allowed options");
     desc.add_options()
         ("help", "produce help message")
-        ("encoding", po::value<string>(&encoding)->default_value("tuple"),
-                "use direct/tuple encoding")
+        // ("encoding", po::value<string>(&encoding)->default_value("tuple"), // Encoding decision will be made by ML
+        //         "use direct/tuple encoding")
         ("verify", po::value<bool>(&verify_only)->default_value(false),
                 "verify MIP start and exit")
         ("input-file,i", po::value<string>(), "uai input file")
@@ -717,6 +837,8 @@ int main(int argc, char* argv[])
         ("query-file,q", po::value<string>(), "query file")
         ("task,t", po::value<string>(), "task")
         ("mip-start-file,s", po::value<string>(), "MIP start")
+        ("feat-file,f", po::value<string>(), "save instance features to this file")
+        ("feat-only", po::value<bool>(&feat_only)->default_value(false), "compute features and exit")
         ;
 
     po::positional_options_description p;
@@ -733,12 +855,6 @@ int main(int argc, char* argv[])
         cout << desc << "\n";
         return 1;
     }
-
-    enum encoding enc = TUPLE;
-    if (encoding == "direct" )
-        enc = DIRECT;
-    else if (encoding == "mixed")
-        enc = MIXED;
 
     if(!vm.count("input-file")) {
         cout << "must specify input file\n";
@@ -776,8 +892,11 @@ int main(int argc, char* argv[])
         cout << "could not open " << evidence_file << "\n";
     }
 
+    auto begin = ifs.tellg();
     wcsp w = readwcsp(ifs);
+    long long filesize = (long long)(ifs.tellg() - begin);
     read_evidence(w, efs);
+    double timeread = get_cpu_time();
 
     Cost newtop = 0;
     for(auto const& f : w.functions) {
@@ -794,6 +913,7 @@ int main(int argc, char* argv[])
     }
     if( newtop < w.ub )
         w.ub = newtop;
+    double timeub = get_cpu_time() - timeread;
 
     if( vm.count("mip-start-file") ) {
         string ms = vm["mip-start-file"].as<string>();
@@ -831,17 +951,51 @@ int main(int argc, char* argv[])
     }
 
     cout << cpuTime() << " to read input\n";
-    const char *inftime = getenv("INF_TIME");
-    if(!inftime) {
+
+    double beforefeat = cpuTime();
+    featstruct feats = compute_features(w, filesize, timeread, timeub);
+    double tcomputefeat = cpuTime() - beforefeat;
+    cout << "time to compute features: " << tcomputefeat << endl;
+
+    if(vm.count("feat-file")){
+        string featfilename = vm["feat-file"].as<string>();
+        ofstream ofs(featfilename);
+        if(!ofs){
+            cerr << "Could not open feature file " << featfilename << endl;
+            return 1;
+        }
+        write_csv_features(ofs, vm["input-file"].as<string>(), feats);
+        if(feat_only) return 0;
+    }
+
+    const char *inftimestr = getenv("INF_TIME");
+    if(!inftimestr) {
         cout << "INF_TIME not set\n";
         return 1;
     }
-    double timeout = stoi(inftime) - cpuTime();
+    double inftime = (double) stoi(inftimestr);
+    double timeout = inftime - cpuTime();
 
-    cout << "Using " << encoding << " encoding\n";
+    int solverid = predictsolver(feats.features);
+    cout << "Prediction: " <<  solverid << endl;
 
     try {
-        solveilp(w, enc, ofs, timeout);
+        if(solverid == proteus_mplp2){
+            cout << "mplp2" << endl;
+        } else if(solverid == proteus_toulbar2){
+            cout << "toulbar2" << endl;
+        } else if(solverid == proteus_tb2incop){
+            cout << "tb2incop" << endl;
+        } else if(solverid == proteus_cplex){
+            cout << "cplex direct" << endl;
+            // solveilp(w, DIRECT, ofs, timeout);
+        } else if(solverid == proteus_cplex_t){
+            cout << "cplex tuple" << endl;
+            // solveilp(w, TUPLE, ofs, timeout);
+        } else {
+            cerr << "Unknown solverid prediction" << endl;
+            exit(1);  // FIXME default to one solver for submission
+        }
     } catch(IloException e) {
         cout << "cplex exception " << e << "\n";
         throw;
