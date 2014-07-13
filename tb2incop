@@ -1,0 +1,50 @@
+#!/bin/tcsh
+
+# usage: ./solver problem.uai problem.uai.evid - MPE
+
+# warning! if the script is killed before normal termination then intermediate files are not removed 
+set Mypath=`dirname $0`
+echo $Mypath 
+
+if ( ${?INF_TIME} ) then
+  set timelimit=`expr ${INF_TIME} - 10`
+  limit cputime ${timelimit}
+endif
+
+if ( ${?INF_MEMORY} ) then
+  set memlimit=`awk 'BEGIN{print int('${INF_MEMORY}' * 1024)}'`
+  limit memoryuse ${memlimit}m
+endif
+
+rm -f ./${1:t:r}.sol
+
+# coarse precision solving using INCOP and toulbar2
+if ( { $Mypath/toulbar2 $1 $2 -precision=2 -z=1 -nopre -k=0 } ) then
+  echo "***SEARCH WITH PRECISION 2***"
+  if ( { ($Mypath/toulbar2 ./${1:t:r}.wcsp -i -l=-1 |& awk 'BEGIN{ok=1} {print $0} /Initial upperbound: 0/{ok=0} END{exit(ok)}') } ) then
+    if ( { $Mypath/toulbar2 $1 $2 -precision=4 -z=1 -nopre -k=0 } ) then
+      echo "***SEARCH WITH PRECISION 4***"
+      if ( { ($Mypath/toulbar2 ./${1:t:r}.wcsp -i -l=-1 |& awk 'BEGIN{ok=1} {print $0} /Initial upperbound: 0/{ok=0} END{exit(ok)}') } ) then
+        if ( { $Mypath/toulbar2 $1 $2 -precision=6 -z=1 -nopre -k=0 } ) then
+          echo "***SEARCH WITH PRECISION 6***"
+          $Mypath/toulbar2 ./${1:t:r}.wcsp -i -l=-1
+        endif
+      endif
+    endif
+  endif
+endif
+rm -f ./${1:t:r}.wcsp
+
+# fine precision solving using toulbar2 only
+echo "***SEARCH WITH DEFAULT PRECISION***"
+if (-e ./${1:t:r}.uai.MPE) then
+  # exploit previous best solution
+  awk 'FNR==2{$1="";print $0;exit 0}' ./${1:t:r}.uai.MPE > ! ./${1:t:r}.sol
+  $Mypath/toulbar2 $1 $2 ./${1:t:r}.sol -l=1 -L
+  rm -f ./${1:t:r}.sol
+else
+  $Mypath/toulbar2 $1 $2 -l=1 -L
+endif
+
+exit 0
+
