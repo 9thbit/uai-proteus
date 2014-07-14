@@ -227,7 +227,8 @@ void read_start(wcsp& w, istream& is)
         w.start.clear(); // forget the last solution
         for(unsigned i = 0; i != nast; ++i) {
             assignment a;
-            is >> a.var >> a.val;
+            a.var = i;
+            is >> a.val;
             w.start.push_back(a);
         }
     }
