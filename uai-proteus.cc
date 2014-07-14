@@ -744,13 +744,6 @@ vecstats compute_vector_stats(vector<T> v, function<double (T)> f){
     return {mean, stddev, coefvar, min, max};
 }
 
-size_t count_arity(vector<wcspfunc> functions, size_t arity){
-    // Counts the number of cost functions with a specific arity
-    return accumulate(functions.begin(), functions.end(), 0,
-        [&](size_t tot, wcspfunc f) { return tot + (f.arity() == arity ? 1 : 0); }
-    );
-}
-
 void write_csv_features(ostream &ofs, string probname, featstruct f){
     ofs << "instance";  // Header line
     for(auto s : f.featnames) ofs << "," << s; ofs << endl;
@@ -792,20 +785,26 @@ featstruct compute_features(wcsp w, long filesize, double timeread, double timeu
         [&](wcspfunc f) { return (double)(f.arity()); });
     addfeatstats("arity", aritystats);
 
+    // Count of arities at indices: 0:unused, 1:unary, 2:binary, 3:ternary, 4:greater than ternary
+    size_t aritycount[] = {0, 0, 0, 0, 0};
+    for(auto f : w.functions){
+        size_t a = f.arity();
+        if(a >= 1 && a <= 3) aritycount[a]++;
+        else if(a >= 4) aritycount[4]++;
+    }
+
     // Density of unary, binary, and ternary cost functions, i.e. the fraction
     // of the total number of possible cost functions of each arity.
-    size_t count1 = count_arity(w.functions, 1);
-    size_t count2 = count_arity(w.functions, 2);
-    size_t count3 = count_arity(w.functions, 3);
-    double density_unary = (double) count1 / (double)N;
-    double density_binary = (double) count2 / (double)(N * (N - 1));
-    double density_ternary = (double) count3 / (double)(N * (N - 1) * (N - 2));
+    double density_unary = (double) aritycount[1] / (double)N;
+    double density_binary = (double) aritycount[2] / (double)(N * (N - 1));
+    double density_ternary = (double) aritycount[3] / (double)(N * (N - 1) * (N - 2));
     addfeat("density1", density_unary);
     addfeat("density2", density_binary);
     addfeat("density3", density_ternary);
 
     // Ratio of CFs that have arity 4 or greater.
-    double arity4plus = (double)(w.functions.size() - count1 - count2 - count3) / (double) w.functions.size();
+    // double arity4plus = (double)(w.functions.size() - count1 - count2 - count3) / (double) w.functions.size();
+    double arity4plus = (double)aritycount[4] / (double)w.functions.size();
     addfeat("arity4plus", arity4plus);
 
     return feats;
