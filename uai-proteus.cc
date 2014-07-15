@@ -95,6 +95,7 @@ struct wcsp {
     Cost ub;
 
     vector<size_t> domains;
+    vector<size_t> degree;
     size_t nvars() const { return domains.size(); }
 
     vector<wcspfunc> functions;
@@ -192,12 +193,19 @@ wcsp readwcsp(istream& is)
     w.domains = read_vec<size_t>(is, nvars);
     if( w.domains.size() != nvars )
         throw up();
+    w.degree.resize(nvars, 0);
 
     is >> nfun;
     for(size_t i = 0; i != nfun; ++i)
         w.functions.push_back(read_fun_scope(is));
     for(size_t i = 0; i != nfun; ++i)
         read_fun_matrix(w, w.functions[i], is);
+
+    for( auto& f: w.functions ) {
+        if( f.scope.size() >= 2 )
+            for(auto var: f.scope)
+                ++w.degree[var];
+    }
 
     return w;
 }
@@ -461,19 +469,43 @@ void add_start(wcsp const& w, cplexvars const& v,
     IloEnv env = cplex.getEnv();
     IloNumVarArray startVar(env);
     IloNumArray startVal(env);
+    vector<size_t> asgn(w.nvars());
     for(auto&& ast: w.start) {
+        asgn[ast.var] = 0;
         switch(w.domains[ast.var]) {
         case 1:
             break;
         case 2:
-            startVar.add(v.d[ast.var][0]);
-            startVal.add(ast.val);
+            if( w.degree[ast.var] >= 1 ) {
+                startVar.add(v.d[ast.var][0]);
+                startVal.add(ast.val);
+            }
             break;
         default:
             for(size_t i = 0; i != w.domains[ast.var]; ++i) {
                 startVar.add(v.d[ast.var][i]);
                 startVal.add( ast.val == i );
             }
+            break;
+        }
+    }
+
+    cplex.addMIPStart(startVar, startVal);
+}
+
+void add_start_as_constraints(wcsp const& w, cplexvars const& v,
+                              IloModel model)
+{
+    for(auto&& ast: w.start) {
+        switch(w.domains[ast.var]) {
+        case 1:
+            break;
+        case 2:
+            model.add(v.d[ast.var][0] == ast.val);
+            break;
+        default:
+            for(size_t i = 0; i != w.domains[ast.var]; ++i)
+                model.add(v.d[ast.var][i] == (i==ast.val) );
             break;
         }
     }
@@ -484,6 +516,7 @@ bool should_print_incumbent = false;
 bool alarm_expired = false;
 bool first_solution = true;
 vector<int> incumbent;
+Cost incumbent_value = std::numeric_limits<Cost>::infinity();
 
 void print_incumbent(ostream& ofs)
 {
@@ -519,6 +552,7 @@ Cost verify_incumbent(wcsp const& w)
             }
         }
     }
+    incumbent_value = obj;
     cout << "incumbent cost " << obj << "\n";
     return obj;
 }
@@ -535,7 +569,7 @@ void extract_solution(IloCplex cplex, wcsp const& w, cplexvars const& vars)
             break;
         case 2:
             {
-                IloNum val = cplex.getValue(vars.d[var][0]);
+                IloNum val = cplex.getValue(vars.d[var][0]) > 0.5;
                 incumbent.push_back(val);
                 break;
             }
@@ -569,8 +603,7 @@ ILOMIPINFOCALLBACK5(loggingCallback,
     bool record_incumbent = false;
 
     if ( hasIncumbent() &&
-         fabs(lastIncumbent - getIncumbentObjValue())
-         > 1e-5*(1.0 + fabs(getIncumbentObjValue())) ) {
+         lastIncumbent > getIncumbentObjValue() ) {
         lastIncumbent = getIncumbentObjValue();
         record_incumbent = true;
         new_incumbent = true;
@@ -588,7 +621,7 @@ ILOMIPINFOCALLBACK5(loggingCallback,
                 {
                     try {
                         IloNum val = getIncumbentValue(vars.d[var][0]);
-                        incumbent.push_back(val);
+                        incumbent.push_back(val > 0.5);
                     } catch( IloException ) {
                         // a disconnected binary variable where both
                         // values have the same cost will not be
@@ -618,6 +651,25 @@ ILOMIPINFOCALLBACK5(loggingCallback,
                 }
             }
         }
+
+        /* Verify that the correct tuple variables are set to 1 */
+        for(size_t i = 0; i != w.functions.size(); ++i) {
+            auto&& f = w.functions[i];
+            if( f.scope.size() < 2 )
+                continue;
+            for(size_t j = 0; j != f.specs.size(); ++j) {
+                auto&& t = f.specs[j];
+                bool it = true;
+                for(unsigned i = 0; i != f.scope.size(); ++i)
+                    if( incumbent[f.scope[i]] != t.tup[i] ) {
+                        it = false;
+                        break;
+                    }
+                int tval = getIncumbentValue( vars.p[i][j] ) > 0.5;
+                if( tval != it )
+                    throw up();
+            }
+        }
     }
 
     if( getCplexTime() - lastPrint > 10.0 ) {
@@ -627,13 +679,16 @@ ILOMIPINFOCALLBACK5(loggingCallback,
 
     if( new_incumbent && should_print_incumbent ) {
         print_incumbent(ofs);
+        verify_incumbent(w);
         lastPrint = getCplexTime();
     }
 }
 
 enum encoding { TUPLE, DIRECT, MIXED };
+enum task { SOLVE, VERIFY };
 
-void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
+void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout,
+              task t = SOLVE)
 {
     IloEnv iloenv;
     IloModel ilomodel(iloenv);
@@ -649,6 +704,14 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
     add_evidence(w, v, ilomodel);
     build_objective(w, v, iloenv, ilomodel);
 
+
+    if( t == VERIFY ) {
+        if( w.start.empty() )
+            throw up();
+        add_start_as_constraints(w, v, ilomodel);
+    }
+
+    cplex.extract(ilomodel);
     if( !w.start.empty() ) {
         if( w.start.size() != w.nvars() ) {
             cout << "start has the wrong number of variables\n";
@@ -656,8 +719,6 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
         }
         add_start(w, v, cplex);
     }
-
-    cplex.extract(ilomodel);
 
     if( !debug ) {
         cplex.setParam(IloCplex::MIPDisplay, 0);
@@ -679,9 +740,15 @@ void solveilp(wcsp const& w, encoding enc, ostream& ofs, double timeout)
         cout << "oops, cplex says " << e << "\n";
     }
 
+    if( t == VERIFY && cplex.getStatus() == IloAlgorithm::Infeasible ) {
+        cout << "infeasible, should check why\n";
+        throw up();
+    }
+
+
     if( new_incumbent )
         print_incumbent(ofs);
-    else if( first_solution ) {
+    if( first_solution || cplex.getObjValue() < incumbent_value ) {
         // print_incumbent has not been called because the callback is
         // (I think) not called for solutions found before presolve.
         // So it is possible we are feasible or even optimal but
