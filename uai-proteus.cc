@@ -32,6 +32,10 @@ double cpuTime(void)
 using namespace std;
 using boost::format;
 
+// If at least this much time is remaining, we will try to verify the solution
+// of a solver is feasible. If it is not, we will try the next solver.
+#define VERIFYSOLLIMIT 3.0
+
 template<typename T>
 ostream& operator<<(ostream& os, vector<T> const& v)
 {
@@ -498,7 +502,7 @@ void print_incumbent(ostream& ofs)
     first_solution = false;
 }
 
-void verify_incumbent(wcsp const& w)
+Cost verify_incumbent(wcsp const& w)
 {
     Cost obj = 0.0;
     for(auto&& f: w.functions) {
@@ -516,6 +520,7 @@ void verify_incumbent(wcsp const& w)
         }
     }
     cout << "incumbent cost " << obj << "\n";
+    return obj;
 }
 
 void extract_solution(IloCplex cplex, wcsp const& w, cplexvars const& vars)
@@ -811,9 +816,113 @@ featstruct compute_features(wcsp w, long filesize, double timeread, double timeu
     return feats;
 }
 
-double get_cpu_time(){
-    return (double)clock() / CLOCKS_PER_SEC;
+bool checksolutionfileexists(wcsp w, string result_file){
+    // Checks that the solution file exists and contains a non-infinite cost
+    Cost c = numeric_limits<Cost>::max();
+    ifstream msfs(result_file);
+    if( !msfs ) {
+        cout << "could not read solution file " << result_file << "\n";
+        return false;
+    }
+    read_start(w, msfs);
+
+    // FIXME: copied from main below
+    if( !w.start.empty() ) {
+        incumbent.resize(w.nvars());
+        for(auto&& ast: w.start)
+            incumbent[ast.var] = ast.val;
+
+        c = verify_incumbent(w);
+    }
+
+    return !std::isinf(c);
 }
+
+
+int launch_solver(wcsp w, int solverid, string input_file, string evidence_file, string result_file, double timeout){
+    string cmd;
+    int retval = 0;
+    double startelapsed = cpuTime();
+
+    // -------------------- internal CPLEX interface --------------------
+    if(solverid == proteus_cplexdirect || solverid == proteus_cplextuple){
+        ofstream ofs(result_file);
+        if( !ofs ) {
+            cout << "could not open " << result_file << "\n";
+            return 1;
+        }
+
+        if(solverid == proteus_cplexdirect){
+            cout << "cplex direct" << endl;
+            try {
+                solveilp(w, DIRECT, ofs, timeout);
+                // system(("rm " + result_file).c_str());  // FIXME debug
+            } catch(IloException e) {
+                retval = -2;
+            } catch(up) {
+                retval = -3;
+            }
+
+        } else if(solverid == proteus_cplextuple){
+            cout << "cplex tuple" << endl;
+            try {
+                solveilp(w, TUPLE, ofs, timeout);
+            } catch(IloException e) {
+                retval = -2;
+            } catch(up) {
+                retval = -3;
+            }
+        }
+
+    } else {
+        // -------------------- External solver --------------------
+        if(solverid == proteus_mplp2){
+            // argv2[0] = "./mplp2";
+            // retval = execv("./mplp2", (char **)argv2);
+            cmd = "./mplp2 " + input_file + " " + evidence_file + " ignorequery MPE";
+        } else
+        if(solverid == proteus_toulbar2){
+            // argv2[0] = "./toulbar2";
+            // retval = execv("./toulbar2", (char **)argv2);
+            cmd = "./toulbar2 " + input_file + " " + evidence_file + " ignorequery MPE";
+
+        } else if(solverid == proteus_tb2incop){
+            // argv2[0] = "./tb2incop";
+            // retval = execv("./tb2incop", (char **)argv2);
+            cmd = "./tb2incop " + input_file + " " + evidence_file + " ignorequery MPE";
+
+        } else {
+            cerr << "Unknown solverid to launch" << endl;
+            exit(1);  // FIXME default to one solver for submission
+        }
+
+        cout << "Launching: " << cmd << endl;
+        retval = system(cmd.c_str());
+
+        // if(solverid == proteus_toulbar2) system(("rm " + result_file).c_str());  // FIXME debug
+    }
+
+    if(retval != 0) {
+        cout << "Error launching solver " << solverid << " return value: " << retval << endl; // << ". retrying with fallback solver." << endl;
+    } else {
+        // If we have time remaining, check that the solver did give a solution
+        double remainingtime = timeout - (cpuTime() - startelapsed);
+        cout << "Remaining time: " << remainingtime << endl;
+        if(remainingtime > VERIFYSOLLIMIT){  // FIXME
+            bool validsol = checksolutionfileexists(w, result_file);
+            if(!validsol){
+                cout << "Solver finished but the solution could not be verified." << endl;
+                retval = -5;
+            }
+        }
+
+    }
+    return retval;
+}
+
+
+
+
 
 
 /***********************************************************************/
@@ -825,6 +934,8 @@ int main(int argc, char* argv[])
 
     // string encoding;
     bool verify_only = false, feat_only = false;
+    int retval;
+
     po::options_description desc("Allowed options");
     desc.add_options()
         ("help", "produce help message")
@@ -892,20 +1003,18 @@ int main(int argc, char* argv[])
         cout << "could not open " << evidence_file << "\n";
     }
 
+    size_t dirpos = input_file.rfind('/');
+    if(dirpos == string::npos )
+        dirpos = 0;
+    else
+        ++dirpos;
+    string result_file = input_file.substr(dirpos)+"."+task;
+
     // Get the filesize for feature time-limit prediction
     auto begin = ifs.tellg();
     ifs.seekg(0, ios_base::end);
     long long filesize = (long long)(ifs.tellg() - begin);
     ifs.seekg(begin);
-
-    // Build sub-solver arguments, ready to launch solver
-    const char **argv2 = new const char*[6];
-    argv2[1] = input_file.c_str();
-    argv2[2] = evidence_file.c_str();
-    argv2[3] = "ignorequery";
-    argv2[4] = "MPE";
-    argv2[5] = NULL;
-    int retval = 0;
 
     // Check if we're being run for 20 seconds
     const char *inftimestr = getenv("INF_TIME");
@@ -913,27 +1022,25 @@ int main(int argc, char* argv[])
         cout << "INF_TIME not set\n";
         return 1;
     }
-    double inftime = (double) stoi(inftimestr);
+    double inftime = (double) stoi(inftimestr), timeout;
     cout << "INF_TIME: " << inftime << endl;
 
+
     if(inftime <= 21.0 || filesize > PROTEUSFILESIZELIMIT){
-        // Don't read the problem, just run toulbar2
+        // Don't read the problem, just run the fallback solver
         if(filesize > PROTEUSFILESIZELIMIT)
             cout << "Filesize: " << filesize << endl;
 
         cout << "Fallback solver" << endl;
-        argv2[0] = "./toulbar2";
-        retval = execv("./toulbar2", (char **)argv2);
-
-        // This only returns if there was an issue launching the solver
-        cerr << "Unknown error launching solver " << retval;
+        timeout = inftime - cpuTime();
+        retval = launch_solver(wcsp(), proteus_toulbar2, input_file, evidence_file, result_file, timeout);
         return retval;
     }
 
 
     wcsp w = readwcsp(ifs);
     read_evidence(w, efs);
-    double timeread = get_cpu_time();
+    double timeread = cpuTime();
 
     Cost newtop = 0;
     for(auto const& f : w.functions) {
@@ -950,7 +1057,7 @@ int main(int argc, char* argv[])
     }
     if( newtop < w.ub )
         w.ub = newtop;
-    double timeub = get_cpu_time() - timeread;
+    double timeub = cpuTime() - timeread;
 
     if( vm.count("mip-start-file") ) {
         string ms = vm["mip-start-file"].as<string>();
@@ -963,22 +1070,15 @@ int main(int argc, char* argv[])
         read_start(w, msfs);
     }
 
-    size_t dirpos = input_file.rfind('/');
-    if(dirpos == string::npos )
-        dirpos = 0;
-    else
-        ++dirpos;
-    string result_file = input_file.substr(dirpos)+"."+task;
-    ofstream ofs(result_file);
-    if( !ofs ) {
-        cout << "could not open " << result_file << "\n";
-        return 1;
-    }
-
     if( !w.start.empty() ) {
         incumbent.resize(w.nvars());
         for(auto&& ast: w.start)
             incumbent[ast.var] = ast.val;
+        ofstream ofs(result_file);
+        if( !ofs ) {
+            cout << "could not open " << result_file << "\n";
+            return 1;
+        }
         print_incumbent(ofs);
     }
 
@@ -989,6 +1089,7 @@ int main(int argc, char* argv[])
 
     cout << cpuTime() << " to read input\n";
 
+    // -------------------- Feature computation --------------------
     double beforefeat = cpuTime();
     featstruct feats = compute_features(w, filesize, timeread, timeub);
     double tcomputefeat = cpuTime() - beforefeat;
@@ -1005,59 +1106,18 @@ int main(int argc, char* argv[])
         if(feat_only) return 0;
     }
 
-    double timeout = inftime - cpuTime();
 
-    int solverid = predictsolver(feats.features);
-    cout << "Prediction: " <<  solverid << endl;
+    // -------------------- Solver Prediction --------------------
+    vector<size_t> solverorder = predictsolver(feats.features);
 
-    try {
-        // Close the result file stream if we are running external solvers
-        if(solverid != proteus_cplexdirect && solverid != proteus_cplextuple){
-            ofs.close();
-        }
-
-        const char **argv2 = new const char*[6];
-        argv2[1] = input_file.c_str();
-        argv2[2] = evidence_file.c_str();
-        argv2[3] = "ignorequery";
-        argv2[4] = "MPE";
-        argv2[5] = NULL;
-        int retval = 0;
-        
-        if(solverid == proteus_toulbar2){
-            argv2[0] = "./toulbar2";
-            retval = execv("./toulbar2", (char **)argv2);
-
-        } else if(solverid == proteus_tb2incop){
-            argv2[0] = "./tb2incop";
-            retval = execv("./tb2incop", (char **)argv2);
-
-        } else if(solverid == proteus_cplexdirect){
-            cout << "cplex direct" << endl;
-            solveilp(w, DIRECT, ofs, timeout);
-
-        } else if(solverid == proteus_cplextuple){
-            cout << "cplex tuple" << endl;
-            solveilp(w, TUPLE, ofs, timeout);
-
-        } else {
-            cerr << "Unknown solverid prediction" << endl;
-            exit(1);  // FIXME default to one solver for submission
-        }
-
-        if(retval != 0){
-            cout << "Error launching subprocess return value: " << retval << ". retrying with fallback solver." << endl;
-            argv2[0] = "./toulbar2";
-            retval = execv("./toulbar2", (char **)argv2);
-            cout << "Retval: " << retval << endl;
-        }
-    } catch(IloException e) {
-        cout << "cplex exception " << e << "\n";
-        throw;
-    } catch(up) { // hey how are you
-        cout << "something went wrong... internal error\n";
-        throw;
+    for(auto solverid : solverorder){
+        cout << "Will run solver " <<  solverid << endl;
+        timeout = inftime - cpuTime();
+        retval = launch_solver(w, solverid, input_file, evidence_file, result_file, timeout);
+        cout << retval;
+        if(retval == 0) break;
     }
 
     return 0;
 }
+
