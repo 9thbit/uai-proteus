@@ -892,9 +892,46 @@ int main(int argc, char* argv[])
         cout << "could not open " << evidence_file << "\n";
     }
 
+    // Get the filesize for feature time-limit prediction
     auto begin = ifs.tellg();
-    wcsp w = readwcsp(ifs);
+    ifs.seekg(0, ios_base::end);
     long long filesize = (long long)(ifs.tellg() - begin);
+    ifs.seekg(begin);
+
+    // Build sub-solver arguments, ready to launch solver
+    const char **argv2 = new const char*[6];
+    argv2[1] = input_file.c_str();
+    argv2[2] = evidence_file.c_str();
+    argv2[3] = "ignorequery";
+    argv2[4] = "MPE";
+    argv2[5] = NULL;
+    int retval = 0;
+
+    // Check if we're being run for 20 seconds
+    const char *inftimestr = getenv("INF_TIME");
+    if(!inftimestr) {
+        cout << "INF_TIME not set\n";
+        return 1;
+    }
+    double inftime = (double) stoi(inftimestr);
+    cout << "INF_TIME: " << inftime << endl;
+
+    if(inftime <= 21.0 || filesize > PROTEUSFILESIZELIMIT){
+        // Don't read the problem, just run toulbar2
+        if(filesize > PROTEUSFILESIZELIMIT)
+            cout << "Filesize: " << filesize << endl;
+
+        cout << "Fallback solver" << endl;
+        argv2[0] = "./toulbar2";
+        retval = execv("./toulbar2", (char **)argv2);
+
+        // This only returns if there was an issue launching the solver
+        cerr << "Unknown error launching solver " << retval;
+        return retval;
+    }
+
+
+    wcsp w = readwcsp(ifs);
     read_evidence(w, efs);
     double timeread = get_cpu_time();
 
@@ -968,12 +1005,6 @@ int main(int argc, char* argv[])
         if(feat_only) return 0;
     }
 
-    const char *inftimestr = getenv("INF_TIME");
-    if(!inftimestr) {
-        cout << "INF_TIME not set\n";
-        return 1;
-    }
-    double inftime = (double) stoi(inftimestr);
     double timeout = inftime - cpuTime();
 
     int solverid = predictsolver(feats.features);
@@ -981,7 +1012,7 @@ int main(int argc, char* argv[])
 
     try {
         // Close the result file stream if we are running external solvers
-        if(solverid != proteus_cplex && solverid != proteus_cplex_t){
+        if(solverid != proteus_cplexdirect && solverid != proteus_cplextuple){
             ofs.close();
         }
 
@@ -992,12 +1023,8 @@ int main(int argc, char* argv[])
         argv2[4] = "MPE";
         argv2[5] = NULL;
         int retval = 0;
-
-        if(solverid == proteus_mplp2){
-            argv2[0] = "./mplp2";
-            retval = execv("./mplp2", (char **)argv2);
-
-        } else if(solverid == proteus_toulbar2){
+        
+        if(solverid == proteus_toulbar2){
             argv2[0] = "./toulbar2";
             retval = execv("./toulbar2", (char **)argv2);
 
@@ -1005,11 +1032,11 @@ int main(int argc, char* argv[])
             argv2[0] = "./tb2incop";
             retval = execv("./tb2incop", (char **)argv2);
 
-        } else if(solverid == proteus_cplex){
+        } else if(solverid == proteus_cplexdirect){
             cout << "cplex direct" << endl;
             solveilp(w, DIRECT, ofs, timeout);
 
-        } else if(solverid == proteus_cplex_t){
+        } else if(solverid == proteus_cplextuple){
             cout << "cplex tuple" << endl;
             solveilp(w, TUPLE, ofs, timeout);
 
@@ -1018,7 +1045,12 @@ int main(int argc, char* argv[])
             exit(1);  // FIXME default to one solver for submission
         }
 
-        cout << "Process return value: " << retval << endl;
+        if(retval != 0){
+            cout << "Error launching subprocess return value: " << retval << ". retrying with fallback solver." << endl;
+            argv2[0] = "./toulbar2";
+            retval = execv("./toulbar2", (char **)argv2);
+            cout << "Retval: " << retval << endl;
+        }
     } catch(IloException e) {
         cout << "cplex exception " << e << "\n";
         throw;
