@@ -22,9 +22,9 @@ CPLEXINCDIR   = $(CPLEXHOME)/cplex/include
 #OPTFLAGS=-g
 OPTFLAGS=-O3
 CXXFLAGS=--std=c++11 -D __STDC_LIMIT_MACROS -D __STDC_FORMAT_MACROS -Wall -Wno-parentheses -Wextra \
-	-I$(CPLEXINCDIR) -I$(CONCERTINCDIR) -DIL_STD \
+	-I$(CPLEXINCDIR) -I$(CONCERTINCDIR) -DIL_STD -Wno-sign-compare \
 	$(OPTFLAGS)
-LDLIBS= -lboost_program_options \
+LDLIBS= -lboost_program_options -lboost_filesystem -lboost_system \
 	-L$(CPLEXLIBDIR) -lilocplex -lcplex -L$(CONCERTLIBDIR) -lconcert -lpthread
 LDFLAGS=--static
 

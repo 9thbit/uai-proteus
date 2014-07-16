@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <boost/format.hpp>
 #include <boost/program_options.hpp>
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
 #include "proteuspredictors.h"
 
 #include <ilconcert/ilomodel.h>
@@ -31,6 +33,7 @@ double cpuTime(void)
 
 using namespace std;
 using boost::format;
+namespace fs = boost::filesystem;
 
 // If at least this much time is remaining, we will try to verify the solution
 // of a solver is feasible. If it is not, we will try the next solver.
@@ -891,22 +894,27 @@ bool checksolutionfileexists(wcsp w, string result_file){
         cout << "could not read solution file " << result_file << "\n";
         return false;
     }
-    read_start(w, msfs);
+    try {
+        read_start(w, msfs);
 
-    // FIXME: copied from main below
-    if( !w.start.empty() ) {
-        incumbent.resize(w.nvars());
-        for(auto&& ast: w.start)
-            incumbent[ast.var] = ast.val;
+        // FIXME: copied from main below
+        if( !w.start.empty() ) {
+            incumbent.resize(w.nvars());
+            for(auto&& ast: w.start)
+                incumbent[ast.var] = ast.val;
 
-        c = verify_incumbent(w);
+            c = verify_incumbent(w);
+        }
+    } catch(up) {
+        return false;
     }
 
     return !std::isinf(c);
 }
 
 
-int launch_solver(wcsp w, int solverid, string input_file, string evidence_file, string result_file, double timeout){
+int launch_solver(string basepath, wcsp w, int solverid, string input_file, string evidence_file,
+                  string result_file, double timeout, bool skipverify=false){
     string cmd;
     int retval = 0;
     double startelapsed = cpuTime();
@@ -923,7 +931,6 @@ int launch_solver(wcsp w, int solverid, string input_file, string evidence_file,
             cout << "cplex direct" << endl;
             try {
                 solveilp(w, DIRECT, ofs, timeout);
-                // system(("rm " + result_file).c_str());  // FIXME debug
             } catch(IloException e) {
                 retval = -2;
             } catch(up) {
@@ -944,23 +951,17 @@ int launch_solver(wcsp w, int solverid, string input_file, string evidence_file,
     } else {
         // -------------------- External solver --------------------
         if(solverid == proteus_mplp2){
-            // argv2[0] = "./mplp2";
-            // retval = execv("./mplp2", (char **)argv2);
-            cmd = "./mplp2 " + input_file + " " + evidence_file + " ignorequery MPE";
-        } else
-        if(solverid == proteus_toulbar2){
-            // argv2[0] = "./toulbar2";
-            // retval = execv("./toulbar2", (char **)argv2);
-            cmd = "./toulbar2 " + input_file + " " + evidence_file + " ignorequery MPE";
+            cmd = basepath + "/mplp2 " + input_file + " " + evidence_file + " ignorequery MPE";
+        } else if(solverid == proteus_toulbar2){
+            cmd = basepath + "/toulbar2 " + input_file + " " + evidence_file + " ignorequery MPE";
 
         } else if(solverid == proteus_tb2incop){
-            // argv2[0] = "./tb2incop";
-            // retval = execv("./tb2incop", (char **)argv2);
-            cmd = "./tb2incop " + input_file + " " + evidence_file + " ignorequery MPE";
+            cmd = basepath + "/tb2incop " + input_file + " " + evidence_file + " ignorequery MPE";
 
         } else {
             cerr << "Unknown solverid to launch" << endl;
-            exit(1);  // FIXME default to one solver for submission
+            // exit(1);  // FIXME default to one solver for submission
+            return -6;
         }
 
         cout << "Launching: " << cmd << endl;
@@ -975,7 +976,7 @@ int launch_solver(wcsp w, int solverid, string input_file, string evidence_file,
         // If we have time remaining, check that the solver did give a solution
         double remainingtime = timeout - (cpuTime() - startelapsed);
         cout << "Remaining time: " << remainingtime << endl;
-        if(remainingtime > VERIFYSOLLIMIT){  // FIXME
+        if(!skipverify && remainingtime > VERIFYSOLLIMIT){
             bool validsol = checksolutionfileexists(w, result_file);
             if(!validsol){
                 cout << "Solver finished but the solution could not be verified." << endl;
@@ -1028,6 +1029,12 @@ int main(int argc, char* argv[])
     po::store(po::command_line_parser(argc, argv).
               options(desc).positional(p).run(), vm);
     po::notify(vm);
+
+    fs::path full_path( fs::initial_path<fs::path>() );
+    full_path = fs::system_complete( fs::path( argv[0] ) );
+    string basepath = full_path.parent_path().string();
+    std::cout << "fullpath:" << full_path << std::endl;
+    std::cout << "basepath: " << basepath << endl;
 
     if (vm.count("help")) {
         cout << desc << "\n";
@@ -1093,14 +1100,16 @@ int main(int argc, char* argv[])
     cout << "INF_TIME: " << inftime << endl;
 
 
-    if(inftime <= 21.0 || filesize > PROTEUSFILESIZELIMIT){
+    if(!verify_only && !feat_only && (inftime <= 21.0 || filesize > PROTEUSFILESIZELIMIT)){
         // Don't read the problem, just run the fallback solver
         if(filesize > PROTEUSFILESIZELIMIT)
             cout << "Filesize: " << filesize << endl;
 
-        cout << "Fallback solver" << endl;
+        cout << "Fallback solver " << proteus_short_backup << endl;
         timeout = inftime - cpuTime();
-        retval = launch_solver(wcsp(), proteus_toulbar2, input_file, evidence_file, result_file, timeout);
+        retval = launch_solver(basepath, wcsp(), proteus_short_backup,
+                               input_file, evidence_file, result_file, timeout,
+                               true);
         return retval;
     }
 
@@ -1180,7 +1189,7 @@ int main(int argc, char* argv[])
     for(auto solverid : solverorder){
         cout << "Will run solver " <<  solverid << endl;
         timeout = inftime - cpuTime();
-        retval = launch_solver(w, solverid, input_file, evidence_file, result_file, timeout);
+        retval = launch_solver(basepath, w, solverid, input_file, evidence_file, result_file, timeout);
         cout << retval;
         if(retval == 0) break;
     }
