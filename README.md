@@ -9,24 +9,24 @@ various types of instances. By intelligently choosing the solver on a
 per-instance basis, significant performance gains can be achieved overall. This
 portfolio is composed of 5 component solvers:
 
-* Toulbar2
-  Soft arc consistency revisited
-  Martin C Cooper, Simon de Givry, Marti Sánchez, Thomas Schiex, Matthias Zytnicki, T Werner
-  Artificial Intelligence 174 (7), 449-478
+* Toulbar2  
+  Soft arc consistency revisited  
+  Martin C Cooper, Simon de Givry, Marti Sánchez, Thomas Schiex, Matthias Zytnicki, T Werner  
+  Artificial Intelligence 174 (7), 449-478  
 
-* Toulbar2 preceeded by incop
-  Bertrand Neveu, Gilles Trombettoni, Fred Glover
-  ID Walk: A Candidate List Strategy with a Simple Diversification Device
-  Principles and Practice of Constraint Programming -- CP 2004
+* Toulbar2 preceeded by incop  
+  Bertrand Neveu, Gilles Trombettoni, Fred Glover  
+  ID Walk: A Candidate List Strategy with a Simple Diversification Device  
+  Principles and Practice of Constraint Programming -- CP 2004  
 
-* mplp2
-  David Sontag, Do Kook Choe, Yitao Li
-  Efficiently Searching for Frustrated Cycles in MAP Inference
-  Uncertainty in Artificial Intelligence -- UAI 2012
+* mplp2  
+  David Sontag, Do Kook Choe, Yitao Li  
+  Efficiently Searching for Frustrated Cycles in MAP Inference  
+  Uncertainty in Artificial Intelligence -- UAI 2012  
 
-* Two encodings, direct and tuple, to ILP and solved using CPLEX.
-  The encodings and interface where implemented by George Katsileros, INRA.
-  IBM ILOG CPLEX http://www-01.ibm.com/software/commerce/optimization/cplex-optimizer/
+* Two encodings, direct and tuple, to ILP and solved using CPLEX.  
+  The encodings and interface where implemented by George Katsileros, INRA.  
+  IBM ILOG CPLEX http://www-01.ibm.com/software/commerce/optimization/cplex-optimizer/  
 
 The interface to CPLEX is implemented directly in uai-proteus.cc, but other
 solvers are launched as external processes.
