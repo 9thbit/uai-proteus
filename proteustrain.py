@@ -513,6 +513,39 @@ def produce_randomforrest_predictor(
 
     writepredictioncode(clf, filesizelimit, solvernames, shorttimesolver)
 
+    featimportfilename = "tblfeatimportances.tex"
+    writefeatureimportances(clf, featnames, featimportfilename)
+
+
+def texify(s):
+    import re
+    s = re.sub("(?P<c>_)", "\_", s)
+    return s
+
+
+def writefeatureimportances(clf, featnames, filename, num_important_feat=15):
+    """
+        Computes the mean feature importance of the trees in the random forest
+        'clf' and outputs to a LaTeX table in 'filename'.
+    """
+    sumfeatimportance = sumfeatimportance = np.zeros([len(featnames)])
+    for c in clf.estimators_:
+        sumfeatimportance += c.feature_importances_
+    sumfeatimportance /= len(clf.estimators_)
+
+    with open(filename, "wt") as f:
+        print >> f, "\\begin{tabular}[c]{lr} \\toprule"
+        print >> f, "Feature & Gini Importance \\\\"
+        print >> f, "\\midrule"
+
+        feature_importances_dict = dict(zip(featnames, sumfeatimportance))
+        for i, (k, v) in enumerate(sorted(feature_importances_dict.iteritems(),
+                                   key=lambda (k, v): v, reverse=True)):
+            if v <= 0.0 or i >= num_important_feat:
+                print >> f, r"%",
+            print >> f, "%s & %.5f \\\\" % (texify(k), v)
+        print >> f, "\\bottomrule\n\\end{tabular}"
+
 
 def writepredictioncode(clf, filesizelimit, solvernames, shorttimesolver):
     with open(predictioncodefilename, "wt") as f:
