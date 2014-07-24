@@ -35,7 +35,7 @@ solvers are launched as external processes.
 ## UAI Training Instances
 
 Performance data of each solver was collected on a collection of 2556 instances
-which have been encoded in UAI format from fields such as MRF, CFPR, CFN, and
+which have been encoded in UAI format from fields such as MRF, CVPR, CFN, and
 Max CSP by INRA: [http://genoweb.toulouse.inra.fr/~degivry/evalgm/]
 We thank the GenoToul Bioinformatics Platform of INRA-Toulouse for providing
 computing resources and support to collect this data.
